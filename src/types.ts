@@ -60,6 +60,7 @@ export type SendMessageBrowserOptions = {
   timeoutMs?: number
   onProgress?: (partialResponse: ChatMessage) => void
   abortSignal?: AbortSignal
+  model?: 'text-davinci-002-render-sha' | 'gpt-4'
 }
 
 export interface ChatMessage {
@@ -146,10 +147,12 @@ export type Prompt = {
   /**
    * The role played in the prompt
    */
-  role: Role
+  author: {
+    role: Role
+  }
 }
 
-export type ContentType = 'text'
+export type ContentType = 'text' | 'multimodal_text'
 
 export type PromptContent = {
   /**
@@ -160,7 +163,21 @@ export type PromptContent = {
   /**
    * The parts to the prompt
    */
-  parts: string[]
+  parts: (
+    | string
+    | {
+        asset_pointer: string
+        size_bytes: number
+        width: number
+        height: number
+      }
+  )[]
+}
+
+export type UploadInfo = {
+  file_name: string
+  file_size: number
+  use_case: 'my_files' | 'multimodal'
 }
 
 export type ConversationResponseEvent = {

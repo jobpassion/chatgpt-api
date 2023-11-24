@@ -1,3 +1,19 @@
+# 2023.11.24 Fork update (本Fork更新内容) 
+
+ - fix support for unofficial proxy API
+   - update your apiReverseProxyUrl to (https://bypass.duti.tech)
+ - add support for images,multimodal..., `only for unofficial proxy API, the official provided api not support yet.`
+   - add third param in sendMessage function, which is array for:
+     - filename : string
+     - file : file buffer content
+```
+    let res = await api.sendMessage('what's in picture?', {model:'gpt-4',onProgress: (partialResponse) =>{
+            console.log(partialResponse.text)
+        }},
+        [{filename, file}]
+    )
+```
+use this fork by add `"chatgpt": "https://github.com/jobpassion/chatgpt-api.git"` in package.json, then npm install
 # ChatGPT API <!-- omit in toc -->
 
 > Node.js client for the official [ChatGPT](https://openai.com/blog/chatgpt/) API.

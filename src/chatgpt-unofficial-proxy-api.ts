@@ -1,9 +1,12 @@
+import imageSize from 'image-size'
+import mime from 'mime-types'
 import pTimeout from 'p-timeout'
 import { v4 as uuidv4 } from 'uuid'
 
 import * as types from './types'
 import { fetch as globalFetch } from './fetch'
 import { fetchSSE } from './fetch-sse'
+import { UploadInfo } from './types'
 import { isValidUUIDv4 } from './utils'
 
 export class ChatGPTUnofficialProxyAPI {
@@ -20,7 +23,7 @@ export class ChatGPTUnofficialProxyAPI {
   constructor(opts: {
     accessToken: string
 
-    /** @defaultValue `https://bypass.duti.tech/api/conversation` **/
+    /** @defaultValue `https://bypass.duti.tech` **/
     apiReverseProxyUrl?: string
 
     /** @defaultValue `text-davinci-002-render-sha` **/
@@ -36,7 +39,7 @@ export class ChatGPTUnofficialProxyAPI {
   }) {
     const {
       accessToken,
-      apiReverseProxyUrl = 'https://bypass.duti.tech/api/conversation',
+      apiReverseProxyUrl = 'https://bypass.duti.tech',
       model = 'text-davinci-002-render-sha',
       debug = false,
       headers,
@@ -96,7 +99,13 @@ export class ChatGPTUnofficialProxyAPI {
    */
   async sendMessage(
     text: string,
-    opts: types.SendMessageBrowserOptions = {}
+    opts: types.SendMessageBrowserOptions = {},
+    files: [
+      {
+        filename: string
+        file: Buffer
+      }
+    ]
   ): Promise<types.ChatMessage> {
     if (!!opts.conversationId !== !!opts.parentMessageId) {
       throw new Error(
@@ -138,20 +147,76 @@ export class ChatGPTUnofficialProxyAPI {
       abortController = new AbortController()
       abortSignal = abortController.signal
     }
+    const _files = files as [
+      {
+        mimeType: string
+        width: number
+        height: number
+        fileSize: number
+        fileId: string
+        filename: string
+        file: Buffer
+      }
+    ]
+    if (files && files.length) {
+      if (opts.model != 'gpt-4') {
+        return Promise.reject('only gpt-4 model support files')
+      }
+      for (let file of _files) {
+        file.mimeType = mime.lookup(file.filename)
+        const uploadResult = await this.uploadFile(file.filename, file.file)
+        file.fileId = uploadResult.file_id
+        file.fileSize = uploadResult.file_size
+        if (file.mimeType && file.mimeType.startsWith('image')) {
+          const dimensions = imageSize(file.file)
+          file.width = dimensions.width
+          file.height = dimensions.height
+        }
+      }
+    }
 
     const body: types.ConversationJSONBody = {
       action,
       messages: [
         {
           id: messageId,
-          role: 'user',
-          content: {
-            content_type: 'text',
-            parts: [text]
-          }
+          author: {
+            role: 'user'
+          },
+          content:
+            _files && _files.length
+              ? {
+                  content_type: 'multimodal_text',
+                  parts: [
+                    ..._files.map((file) => ({
+                      asset_pointer: `file-service://${file.fileId}`,
+                      ...(file.fileSize && { size_bytes: file.fileSize }),
+                      ...(file.width && { width: file.width }),
+                      ...(file.height && { height: file.height })
+                    })),
+                    text
+                  ]
+                }
+              : {
+                  content_type: 'text',
+                  parts: [text]
+                },
+          ...(_files &&
+            _files.length && {
+              metadata: {
+                attachments: _files.map((file) => ({
+                  name: file.filename,
+                  id: file.fileId,
+                  size: file.fileSize,
+                  ...(file.mimeType && { mimeType: file.mimeType }),
+                  ...(file.width && { width: file.width }),
+                  ...(file.height && { height: file.height })
+                }))
+              }
+            })
         }
       ],
-      model: this._model,
+      model: opts.model || this._model,
       parent_message_id: parentMessageId
     }
 
@@ -168,7 +233,7 @@ export class ChatGPTUnofficialProxyAPI {
     }
 
     const responseP = new Promise<types.ChatMessage>((resolve, reject) => {
-      const url = this._apiReverseProxyUrl
+      const url = `${this._apiReverseProxyUrl}/backend-api/conversation`
       const headers = {
         ...this._headers,
         Authorization: `Bearer ${this._accessToken}`,
@@ -264,5 +329,97 @@ export class ChatGPTUnofficialProxyAPI {
     } else {
       return responseP
     }
+  }
+
+  async getFileUploadUrl(uploadInfo: UploadInfo) {
+    const url = `${this._apiReverseProxyUrl}/backend-api/files`
+    const headers = {
+      ...this._headers,
+      Authorization: `Bearer ${this._accessToken}`,
+      'Content-Type': 'application/json'
+    }
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(uploadInfo)
+    })
+    if (response.status >= 300) {
+      return Promise.reject(`statusCode:${response.status}`)
+    }
+    const uploadResult = await response.json()
+    if ('success' != uploadResult.status) {
+      return Promise.reject(`status:${uploadResult.status}`)
+    }
+    return uploadResult
+  }
+
+  /**
+   * call after getFileUploadUrl
+   * this upload could be called directly from browser or client, directly upload to azure
+   * @param url
+   * @param file
+   */
+  async upload(url: string, file) {
+    const headers = {
+      ...this._headers,
+      'x-ms-blob-type': 'BlockBlob',
+      'x-ms-version': '2020-04-08',
+      Origin: 'https://chat.openai.com',
+      'Content-Type': 'application/octet-stream'
+    }
+    const response = await fetch(url, {
+      method: 'put',
+      headers,
+      body: file
+    })
+    if (response.status >= 300) {
+      return Promise.reject(`statusCode:${response.status}`)
+    }
+    return true
+  }
+
+  /**
+   * call after file uploaded
+   * @param fileId
+   */
+  async checkFileUploaded(fileId: string) {
+    const url = `${this._apiReverseProxyUrl}/backend-api/files/${fileId}/uploaded`
+    const headers = {
+      ...this._headers,
+      Authorization: `Bearer ${this._accessToken}`,
+      'Content-Type': 'application/json'
+    }
+    const response = await fetch(url, {
+      method: 'post',
+      headers,
+      body: '{}'
+    })
+    if (response.status >= 300) {
+      return Promise.reject(`statusCode:${response.status}`)
+    }
+    const uploadResult = await response.json()
+    if ('success' != uploadResult.status) {
+      return Promise.reject(`checkFileUploaded status:${uploadResult.status}`)
+    }
+    return true
+  }
+
+  /**
+   * upload file
+   * @param filename
+   * @param file
+   */
+  async uploadFile(filename: string, file: Buffer) {
+    const uploadInfo: UploadInfo = {
+      file_name: filename,
+      file_size: file.length,
+      use_case: 'multimodal'
+    }
+    const uploadResult = await this.getFileUploadUrl(uploadInfo)
+    uploadResult['file_size'] = uploadInfo.file_size
+    await this.upload(uploadResult.upload_url, file)
+    await this.checkFileUploaded(uploadResult.file_id)
+    return uploadResult
   }
 }
