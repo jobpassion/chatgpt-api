@@ -31,7 +31,7 @@
     "predev": "run-s clean",
     "pretest": "run-s build",
     "docs": "typedoc",
-    "prepare": "husky install && npm run build",
+    "prepare": "npm run build",
     "pre-commit": "lint-staged",
     "test": "run-p test:*",
     "test:prettier": "prettier '**/*.{js,jsx,ts,tsx}' --check"
