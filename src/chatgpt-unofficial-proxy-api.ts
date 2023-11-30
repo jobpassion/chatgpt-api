@@ -1,6 +1,8 @@
 import imageSize from 'image-size'
+import Keyv from 'keyv'
 import mime from 'mime-types'
 import pTimeout from 'p-timeout'
+import QuickLRU from 'quick-lru'
 import { v4 as uuidv4 } from 'uuid'
 
 import * as types from './types'
@@ -16,6 +18,7 @@ export class ChatGPTUnofficialProxyAPI {
   protected _model: string
   protected _headers: Record<string, string>
   protected _fetch: types.FetchFn
+  protected _messageStore: Keyv<types.ChatMessage>
 
   /**
    * @param fetch - Optional override for the `fetch` implementation to use. Defaults to the global `fetch` function.
@@ -36,12 +39,15 @@ export class ChatGPTUnofficialProxyAPI {
     headers?: Record<string, string>
 
     fetch?: types.FetchFn
+
+    messageStore?: Keyv
   }) {
     const {
       accessToken,
       apiReverseProxyUrl = 'https://bypass.duti.tech',
       model = 'text-davinci-002-render-sha',
       debug = false,
+      messageStore,
       headers,
       fetch = globalFetch
     } = opts
@@ -52,6 +58,10 @@ export class ChatGPTUnofficialProxyAPI {
     this._model = model
     this._fetch = fetch
     this._headers = headers
+
+    if (messageStore) {
+      this._messageStore = messageStore
+    }
 
     if (!this._accessToken) {
       throw new Error('ChatGPT invalid accessToken')
@@ -102,6 +112,11 @@ export class ChatGPTUnofficialProxyAPI {
     opts: types.SendMessageBrowserOptions = {},
     files: [
       {
+        mimeType: string
+        width: number
+        height: number
+        fileSize: number
+        fileId: string
         filename: string
         file: Buffer
       }
@@ -147,33 +162,48 @@ export class ChatGPTUnofficialProxyAPI {
       abortController = new AbortController()
       abortSignal = abortController.signal
     }
-    const _files = files as [
-      {
-        mimeType: string
-        width: number
-        height: number
-        fileSize: number
-        fileId: string
-        filename: string
-        file: Buffer
-      }
-    ]
     if (files && files.length) {
       if (opts.model != 'gpt-4') {
         return Promise.reject('only gpt-4 model support files')
       }
-      for (let file of _files) {
+      for (let file of files) {
+        if (
+          file.file == null &&
+          (file.fileId == null ||
+            file.filename == null ||
+            file.fileSize == null ||
+            file.width == null ||
+            file.height == null)
+        ) {
+          return Promise.reject('required file params is null')
+        }
         file.mimeType = mime.lookup(file.filename)
-        const uploadResult = await this.uploadFile(file.filename, file.file)
-        file.fileId = uploadResult.file_id
-        file.fileSize = uploadResult.file_size
-        if (file.mimeType && file.mimeType.startsWith('image')) {
+        if (file.fileId == null) {
+          const uploadResult = await this.uploadFile(file.filename, file.file)
+          file.fileId = uploadResult.file_id
+          file.fileSize = uploadResult.file_size
+        }
+        if (
+          file.mimeType &&
+          file.mimeType.startsWith('image') &&
+          null != file.width &&
+          null != file.height
+        ) {
           const dimensions = imageSize(file.file)
           file.width = dimensions.width
           file.height = dimensions.height
         }
       }
     }
+    const message: types.ChatMessage = {
+      role: 'user',
+      id: messageId,
+      conversationId,
+      parentMessageId,
+      text
+    }
+
+    const latestQuestion = message
 
     const body: types.ConversationJSONBody = {
       action,
@@ -184,11 +214,11 @@ export class ChatGPTUnofficialProxyAPI {
             role: 'user'
           },
           content:
-            _files && _files.length
+            files && files.length
               ? {
                   content_type: 'multimodal_text',
                   parts: [
-                    ..._files.map((file) => ({
+                    ...files.map((file) => ({
                       asset_pointer: `file-service://${file.fileId}`,
                       ...(file.fileSize && { size_bytes: file.fileSize }),
                       ...(file.width && { width: file.width }),
@@ -201,10 +231,10 @@ export class ChatGPTUnofficialProxyAPI {
                   content_type: 'text',
                   parts: [text]
                 },
-          ...(_files &&
-            _files.length && {
+          ...(files &&
+            files.length && {
               metadata: {
-                attachments: _files.map((file) => ({
+                attachments: files.map((file) => ({
                   name: file.filename,
                   id: file.fileId,
                   size: file.fileSize,
@@ -311,6 +341,25 @@ export class ChatGPTUnofficialProxyAPI {
           return reject(err)
         }
       })
+    }).then(async (message) => {
+      // if (message.detail && !message.detail.usage) {
+      //   try {
+      //     const promptTokens = numTokens
+      //     const completionTokens = await this._getTokenCount(message.text)
+      //     message.detail.usage = {
+      //       prompt_tokens: promptTokens,
+      //       completion_tokens: completionTokens,
+      //       total_tokens: promptTokens + completionTokens,
+      //       estimated: true
+      //     }
+      //   } catch (err) {
+      //     // TODO: this should really never happen, but if it does,
+      //     // we should handle notify the user gracefully
+      //   }
+      // }
+      await this.upsertMessage(latestQuestion)
+      await this.upsertMessage(message)
+      return message
     })
 
     if (timeoutMs) {
@@ -384,6 +433,9 @@ export class ChatGPTUnofficialProxyAPI {
    * @param fileId
    */
   async checkFileUploaded(fileId: string) {
+    if (!fileId) {
+      return Promise.reject(`fileId can not be null`)
+    }
     const url = `${this._apiReverseProxyUrl}/backend-api/files/${fileId}/uploaded`
     const headers = {
       ...this._headers,
@@ -421,5 +473,8 @@ export class ChatGPTUnofficialProxyAPI {
     await this.upload(uploadResult.upload_url, file)
     await this.checkFileUploaded(uploadResult.file_id)
     return uploadResult
+  }
+  protected async upsertMessage(message: types.ChatMessage): Promise<void> {
+    if (this._messageStore) await this._messageStore.set(message.id, message)
   }
 }
