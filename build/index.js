@@ -590,7 +590,7 @@ var ChatGPTUnofficialProxyAPI = class {
           file.fileId = uploadResult.file_id;
           file.fileSize = uploadResult.file_size;
         }
-        if (file.mimeType && file.mimeType.startsWith("image") && null != file.width && null != file.height) {
+        if (file.mimeType && file.mimeType.startsWith("image") && (null == file.width || null == file.height)) {
           const dimensions = imageSize(file.file);
           file.width = dimensions.width;
           file.height = dimensions.height;

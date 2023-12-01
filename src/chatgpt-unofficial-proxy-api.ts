@@ -186,8 +186,7 @@ export class ChatGPTUnofficialProxyAPI {
         if (
           file.mimeType &&
           file.mimeType.startsWith('image') &&
-          null != file.width &&
-          null != file.height
+          (null == file.width || null == file.height)
         ) {
           const dimensions = imageSize(file.file)
           file.width = dimensions.width
