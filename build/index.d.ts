@@ -552,6 +552,12 @@ declare class ChatGPTUnofficialProxyAPI {
      * @param file
      */
     uploadFile(filename: string, file: Buffer): Promise<any>;
+    /**
+     * upload file
+     * @param filename
+     * @param file
+     */
+    genTitle(conversationId: string, parentMessageId: string): Promise<any>;
     protected upsertMessage(message: ChatMessage): Promise<void>;
 }
 

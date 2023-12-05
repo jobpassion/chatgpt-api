@@ -473,6 +473,41 @@ export class ChatGPTUnofficialProxyAPI {
     await this.checkFileUploaded(uploadResult.file_id)
     return uploadResult
   }
+
+  /**
+   * upload file
+   * @param filename
+   * @param file
+   */
+  async genTitle(conversationId: string, parentMessageId: string) {
+    if (!conversationId) {
+      return Promise.reject(`conversationId can not be null`)
+    }
+    if (!parentMessageId) {
+      return Promise.reject(`parentMessageId can not be null`)
+    }
+    const url = `${this._apiReverseProxyUrl}/backend-api/conversation/gen_title/${conversationId}`
+    const headers = {
+      ...this._headers,
+      Authorization: `Bearer ${this._accessToken}`,
+      'Content-Type': 'application/json'
+    }
+    const response = await fetch(url, {
+      method: 'post',
+      headers,
+      body: JSON.stringify({
+        message_id: parentMessageId
+      })
+    })
+    if (response.status >= 300) {
+      return Promise.reject(`statusCode:${response.status}`)
+    }
+    const result = await response.json()
+    if (!result.title) {
+      return Promise.reject(`genTitle failed:${result}`)
+    }
+    return result.title
+  }
   protected async upsertMessage(message: types.ChatMessage): Promise<void> {
     if (this._messageStore) await this._messageStore.set(message.id, message)
   }
