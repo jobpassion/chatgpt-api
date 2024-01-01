@@ -1,4 +1,4 @@
-# 2023.11.24 Fork update (本Fork更新内容) 
+# 2023.11.24 What this fork update
 
  - fix support for unofficial proxy API
    - update your apiReverseProxyUrl to (https://bypass.duti.tech)
