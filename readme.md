@@ -6,6 +6,7 @@
    - add third param in sendMessage function, which is array for:
      - filename : string
      - file : file buffer content
+ - Currently only images and multimodal are supported for UnofficialProxyAPI, and there are no plans to add support for ChatGPTAPI at the moment.
 ```
     let res = await api.sendMessage('what's in picture?', {model:'gpt-4',onProgress: (partialResponse) =>{
             console.log(partialResponse.text)
